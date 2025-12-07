@@ -1,42 +1,37 @@
-import { useEffect } from 'react';
+// src/components/ProtectedRoute.tsx
+
+import React, { useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/AuthContext'; 
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
-export default function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { user, loading } = useAuth();
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const { user, isAuthReady } = useAuth(); 
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) {
+    // Jika Auth siap dan user tidak ada, redirect ke login
+    if (isAuthReady && !user) {
       router.push('/auth/login');
     }
-  }, [user, loading, router]);
+  }, [user, isAuthReady, router]);
 
-  if (loading) {
+  // Tampilkan loading screen sampai otentikasi siap
+  if (!isAuthReady || !user) {
     return (
-      <div className="text-center">
-        <div className="spinner-border" role="status">
-          <span className="visually-hidden">Loading...</span>
+        <div className="d-flex justify-content-center align-items-center" style={{ height: '80vh' }}>
+            <div className="spinner-border text-primary" role="status">
+                <span className="visually-hidden">Loading...</span>
+            </div>
         </div>
-      </div>
     );
   }
 
-  if (!user) {
-    return (
-      <div className="alert alert-warning">
-        <h4>Authentication Required</h4>
-        <p>You need to be logged in to access this page.</p>
-        <a href="/auth/login" className="btn btn-primary">
-          Login
-        </a>
-      </div>
-    );
-  }
-
+  // Jika otentikasi siap dan user ada, tampilkan konten
   return <>{children}</>;
-}
+};
+
+export default ProtectedRoute;

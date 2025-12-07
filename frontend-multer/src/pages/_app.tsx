@@ -1,3 +1,5 @@
+// _app.tsx
+
 import type { AppProps } from "next/app";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
@@ -8,16 +10,25 @@ function Navigation() {
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
       <div className="container">
+        {/* FIX: Ganti Posts App menjadi Tasks App */}
         <a className="navbar-brand" href="/">
-          Posts App
+          Tasks App
         </a>
         <div className="navbar-nav me-auto">
-          <a className="nav-link" href="/">
-            All Posts
+          {/* FIX: Ganti All Posts menjadi Public Tasks */}
+          <a className="nav-link" href="/tasks/public">
+            Public Tasks
           </a>
           {user && (
-            <a className="nav-link" href="/posts/new">
-              New Post
+            // FIX: Tambahkan link ke My Tasks
+            <a className="nav-link" href="/tasks">
+              My Tasks
+            </a>
+          )}
+          {user && (
+            // FIX: Ganti /posts/new menjadi /tasks/new
+            <a className="nav-link" href="/tasks/new">
+              New Task
             </a>
           )}
         </div>
