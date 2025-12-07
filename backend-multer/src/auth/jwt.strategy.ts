@@ -1,10 +1,12 @@
+// src/auth/jwt.strategy.ts (VERSI DENGAN VALIDASI MINIMAL)
+
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { validate } from 'class-validator';
-import { plainToClass } from 'class-transformer';
+// Hapus import class-validator dan class-transformer sementara
+
 import { PrismaService } from '../prisma.service';
-import { JwtPayloadDto } from './dto/jwt-payload.dto';
+// Hapus import JwtPayloadDto
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -12,26 +14,31 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET || 'your-secret-key',
+      // Pastikan ini sama persis dengan AuthModule
+      secretOrKey: 'your-secret-key', 
     });
   }
 
+  // Payload adalah objek yang Anda tandatangani saat login
   async validate(payload: any) {
-    const payloadDto = plainToClass(JwtPayloadDto, payload);
-    const errors = await validate(payloadDto);
+    
+    // ASUMSI PENTING: Saat login, Anda menandatangani token dengan { sub: username }
+    const username = payload.sub;
 
-    if (errors.length > 0) {
-      throw new UnauthorizedException('Invalid token payload');
+    if (!username) {
+        throw new UnauthorizedException('Token payload is missing the username (sub).');
     }
 
     const user = await this.prisma.user.findUnique({
-      where: { username: payloadDto.sub },
+      where: { username: username },
     });
 
     if (!user) {
-      throw new UnauthorizedException();
+      // Ini akan terjadi jika user sudah dihapus dari DB, tapi tokennya masih ada
+      throw new UnauthorizedException('User not found or token invalid.');
     }
 
+    // Nilai yang dikembalikan ini akan dimasukkan ke request.user
     return { userId: user.username, username: user.username };
   }
 }
