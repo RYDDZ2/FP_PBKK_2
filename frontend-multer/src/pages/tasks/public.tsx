@@ -5,6 +5,15 @@ import { API_BASE_URL } from '../../utils/api';
 import { Task } from '../../types/task'; 
 import Link from 'next/link';
 
+// Definisikan tipe untuk respons paginasi dari backend
+interface PaginatedTasksResponse {
+    data: Task[];
+    total: number;
+    limit: number;
+    page: number;
+    // Tambahkan properti lain jika ada (misal: totalPages)
+}
+
 const PublicTasksPage: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]); 
   const [loading, setLoading] = useState(true);
@@ -23,15 +32,22 @@ const PublicTasksPage: React.FC = () => {
             throw new Error(errorData.message || `Failed to fetch public tasks. Status: ${response.status}`);
         }
 
-        const data = await response.json();
+        // --- PERBAIKAN KRITIS DIMULAI DI SINI ---
         
-        // FIX PENTING: Validasi data agar tasks.map tidak error
-        if (Array.isArray(data)) {
-            setTasks(data);
+        // 1. Dapatkan objek respons paginasi secara keseluruhan
+        const paginatedData: PaginatedTasksResponse = await response.json();
+        
+        // 2. Akses properti 'data' yang berisi array Task
+        const taskArray = paginatedData.data;
+
+        // 3. Verifikasi dan set state
+        if (taskArray && Array.isArray(taskArray)) {
+            setTasks(taskArray); // MENGGUNAKAN taskArray (yaitu paginatedData.data)
         } else {
-            console.error("API returned non-array data:", data);
-            throw new Error('Server returned invalid data format. Expected array of tasks.');
+            console.error("API returned invalid paginated structure:", paginatedData);
+            throw new Error('Server returned invalid paginated data structure. Expected object with a "data" array property.');
         }
+        // --- PERBAIKAN KRITIS SELESAI ---
 
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An unknown error occurred. Check backend server status.');

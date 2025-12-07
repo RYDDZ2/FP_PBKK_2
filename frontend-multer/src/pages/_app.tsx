@@ -1,8 +1,9 @@
-// _app.tsx
+// pages/_app.tsx
 
 import type { AppProps } from "next/app";
 import "bootstrap/dist/css/bootstrap.min.css";
-import { AuthProvider, useAuth } from "../contexts/AuthContext";
+// Pastikan path ke AuthContext benar
+import { AuthProvider, useAuth } from "../contexts/AuthContext"; 
 
 function Navigation() {
   const { user, logout } = useAuth();
@@ -10,23 +11,27 @@ function Navigation() {
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
       <div className="container">
-        {/* FIX: Ganti Posts App menjadi Tasks App */}
+        {/* Mengarahkan ke root (yang seharusnya adalah Public Tasks) */}
         <a className="navbar-brand" href="/">
           Tasks App
         </a>
         <div className="navbar-nav me-auto">
-          {/* FIX: Ganti All Posts menjadi Public Tasks */}
-          <a className="nav-link" href="/tasks/public">
-            Public Tasks
+          {/* 1. PUBLIC TASKS */}
+          <a className="nav-link" href="/">
+            All Posts
           </a>
+          
+          {/* 2. MY TASKS (Hanya jika login) */}
           {user && (
-            // FIX: Tambahkan link ke My Tasks
-            <a className="nav-link" href="/tasks">
+            // Mengarah ke rute yang benar: /tasks/my
+            <a className="nav-link" href="/tasks/my">
               My Tasks
             </a>
           )}
+          
+          {/* 3. NEW TASK (Hanya jika login) */}
           {user && (
-            // FIX: Ganti /posts/new menjadi /tasks/new
+            // Mengarah ke rute yang benar: /tasks/new
             <a className="nav-link" href="/tasks/new">
               New Task
             </a>
@@ -36,7 +41,7 @@ function Navigation() {
           {user ? (
             <>
               <span className="navbar-text me-3">
-                Welcome, {user.username}!
+                Welcome, **{user.username}**!
               </span>
               <button
                 className="btn btn-outline-light btn-sm"

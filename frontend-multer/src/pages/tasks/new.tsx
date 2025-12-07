@@ -1,246 +1,291 @@
-// src/pages/tasks/new.tsx
+// pages/tasks/new.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState, FormEvent, ChangeEvent } from 'react';
 import { useRouter } from 'next/router';
+import axios, { AxiosError } from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
-import ProtectedRoute from '../../components/ProtectedRoute';
 import { API_BASE_URL } from '../../utils/api';
-import { CreateTaskPayload, Priority } from '../../types/task';
-import { Category } from '../../types/category';
+import { Button, Form, Alert, Spinner, Col, Row } from 'react-bootstrap';
+
+// Tipe untuk Category
+interface Category {
+    id: string;
+    name: string;
+}
+
+// Tipe untuk data Task baru
+interface NewTaskData {
+    title: string;
+    description: string;
+    priority: 'low' | 'medium' | 'high';
+    isPublic: boolean;
+    dueDate: string; // ISO Date string
+    categoryId: string;
+}
 
 const NewTaskPage: React.FC = () => {
-  const router = useRouter();
-  const { accessToken } = useAuth();
-  const [categories, setCategories] = useState<Category[]>([]);
-  
-  // FIX: dueDate sekarang valid karena Task interface diperbarui
-  const [formData, setFormData] = useState<Omit<CreateTaskPayload, 'categoryId'>>({
-    title: '',
-    description: null, // Ganti dari '' ke null jika backend menerima null
-    priority: 'medium',
-    isCompleted: false,
-    isPublic: false,
-    dueDate: new Date().toISOString().split('T')[0], // YYYY-MM-DD
-  });
+    const { user, accessToken, isAuthReady, logout } = useAuth();
+    const router = useRouter();
 
-  const [selectedCategoryId, setSelectedCategoryId] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+    const [formData, setFormData] = useState<NewTaskData>({
+        title: '',
+        description: '',
+        priority: 'medium',
+        isPublic: true,
+        dueDate: '',
+        categoryId: '',
+    });
 
-  // 1. Fetch Categories
-  useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/categories`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
-        });
-        if (!response.ok) throw new Error('Failed to fetch categories');
-        const data = await response.json();
-        setCategories(data);
-        if (data.length > 0) {
-          setSelectedCategoryId(data[0].id); // Pilih kategori pertama sebagai default
+    const [file, setFile] = useState<File | null>(null);
+    const [categories, setCategories] = useState<Category[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [catLoading, setCatLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [success, setSuccess] = useState<string | null>(null);
+
+    // --- LOGIKA PROTECTED ROUTE & FETCH CATEGORIES ---
+    useEffect(() => {
+        if (isAuthReady && !user) {
+            router.push('/auth/login');
+            return;
         }
-      } catch (err) {
-        console.error('Category fetch error:', err);
-        setError('Failed to load categories.');
-      }
+
+        if (accessToken) {
+            const fetchCategories = async () => {
+                try {
+                    setCatLoading(true);
+                    const response = await axios.get<Category[]>(`${API_BASE_URL}/categories`, {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`,
+                        },
+                    });
+                    
+                    setCategories(response.data);
+                    // Set categoryId default jika ada kategori
+                    if (response.data.length > 0) {
+                        setFormData(prev => ({ ...prev, categoryId: response.data[0].id }));
+                    }
+                } catch (err) {
+                    const axiosError = err as AxiosError;
+                    if (axiosError.response?.status === 401 || axiosError.response?.status === 403) {
+                         logout();
+                         router.push('/auth/login');
+                    }
+                    setError(`Failed to load categories: ${axiosError.response?.data?.message || axiosError.message}`);
+                } finally {
+                    setCatLoading(false);
+                }
+            };
+            fetchCategories();
+        } else if (isAuthReady) {
+            setCatLoading(false); // Auth ready, tapi token null, user akan dire-redirect
+        }
+    }, [isAuthReady, user, router, accessToken, logout]);
+
+    // Handle input perubahan form
+    const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+        const { name, value, type } = e.target;
+        const checked = type === 'checkbox' ? (e.target as HTMLInputElement).checked : undefined;
+        
+        setFormData(prev => ({
+            ...prev,
+            [name]: type === 'checkbox' ? checked : value,
+        }));
     };
-    if (accessToken) {
-        fetchCategories();
+
+    // Handle perubahan file
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            setFile(e.target.files[0]);
+        } else {
+            setFile(null);
+        }
+    };
+
+    // --- HANDLE SUBMISSION ---
+    const handleSubmit = async (e: FormEvent) => {
+        e.preventDefault();
+        if (!accessToken) return;
+
+        setLoading(true);
+        setError(null);
+        setSuccess(null);
+
+        try {
+            // 1. Buat object FormData (untuk File Upload)
+            const payload = new FormData();
+            
+            // 2. Tambahkan field form
+            payload.append('title', formData.title);
+            payload.append('description', formData.description);
+            payload.append('priority', formData.priority);
+            payload.append('isPublic', String(formData.isPublic));
+            payload.append('dueDate', formData.dueDate); 
+
+            if (formData.categoryId) {
+                payload.append('categoryId', formData.categoryId);
+            }
+
+            // 3. Tambahkan file jika ada
+            if (file) {
+                payload.append('file', file); 
+            }
+
+            // 4. Kirim menggunakan Axios.
+            const response = await axios.post(`${API_BASE_URL}/tasks`, payload, {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                },
+            });
+
+            setSuccess(`Task created successfully! ID: ${response.data.id}`);
+            // Reset form
+            setFormData({ title: '', description: '', priority: 'medium', isPublic: true, dueDate: '', categoryId: categories[0]?.id || '' });
+            setFile(null);
+        } catch (err) {
+            const axiosError = err as AxiosError;
+             if (axiosError.response?.status === 401 || axiosError.response?.status === 403) {
+                 logout();
+                 router.push('/auth/login');
+                 setError('Session expired. Please log in again.');
+            } else {
+                 setError(axiosError.response?.data?.message || 'Failed to create task. Check network or server logs.');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- GUARD DAN LOADING AWAL (Fix "Cannot read properties of null") ---
+    if (!isAuthReady) {
+        return <div className="text-center mt-5"><Spinner animation="border" /> Authenticating...</div>;
     }
-  }, [accessToken]);
 
-  // FIX: Mengatasi redline pada property 'checked'
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target;
-    
-    // Gunakan Type Guard (cast to HTMLInputElement) untuk mengakses 'checked'
-    const target = e.target as HTMLInputElement;
-
-    setFormData((prev) => ({
-      ...prev,
-      [name]: target.type === 'checkbox' ? target.checked : value,
-    }));
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+    if (!user) {
+        return <div className="text-center mt-5">Access Denied. Redirecting...</div>;
     }
-  };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!accessToken || !selectedCategoryId) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const form = new FormData();
-      
-      // Mengubah string kosong menjadi null untuk Description (jika backend memerlukan null)
-      const dataToSend = {
-        ...formData,
-        description: formData.description === '' ? null : formData.description,
-        categoryId: selectedCategoryId,
-      };
-
-      // Append JSON payload
-      form.append('data', JSON.stringify(dataToSend));
-
-      // Append file (if present)
-      if (file) {
-        form.append('file', file);
-      }
-
-      const response = await fetch(`${API_BASE_URL}/tasks`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          // Penting: Hapus 'Content-Type': 'application/json' karena kita menggunakan FormData
-        },
-        body: form,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || `Failed to create task. Status: ${response.status}`);
-      }
-
-      router.push('/tasks');
-    } catch (err) {
-      console.error('Submit error:', err);
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-    } finally {
-      setLoading(false);
+    if (catLoading) {
+        return <div className="text-center mt-5"><Spinner animation="border" /> Loading categories...</div>;
     }
-  };
 
-  if (!accessToken) return <div className="p-8">Please login to create a task.</div>;
+    // --- RENDERING FORM ---
+    return (
+        <div className="container mt-4">
+            <h1 className="mb-4 text-success">Create New Task</h1>
+            
+            {success && <Alert variant="success">{success}</Alert>}
+            {error && <Alert variant="danger">{error}</Alert>}
 
-  return (
-    <ProtectedRoute>
-      <div className="container mx-auto p-8">
-        <h1 className="text-3xl font-bold mb-6">Create New Task</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          
-          {/* Title */}
-          <div>
-            <label className="block text-sm font-medium">Title</label>
-            <input
-              type="text"
-              name="title"
-              value={formData.title}
-              onChange={handleChange}
-              required
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-            />
-          </div>
+            <Form onSubmit={handleSubmit} className="p-4 border rounded shadow-sm">
+                
+                <Row>
+                    {/* Judul */}
+                    <Form.Group as={Col} className="mb-3" controlId="title">
+                        <Form.Label>Title *</Form.Label>
+                        <Form.Control
+                            type="text"
+                            name="title"
+                            value={formData.title}
+                            onChange={handleChange}
+                            required
+                            disabled={loading}
+                        />
+                    </Form.Group>
+                    
+                    {/* Category */}
+                    <Form.Group as={Col} md="4" className="mb-3" controlId="categoryId">
+                        <Form.Label>Category *</Form.Label>
+                        {categories.length === 0 ? (
+                            <Alert variant="warning" className="p-2 py-0">No categories found. Create one first.</Alert>
+                        ) : (
+                            <Form.Select 
+                                name="categoryId" 
+                                value={formData.categoryId} 
+                                onChange={handleChange}
+                                required
+                                disabled={loading}
+                            >
+                                {categories.map(cat => (
+                                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                ))}
+                            </Form.Select>
+                        )}
+                    </Form.Group>
+                </Row>
 
-          {/* Description */}
-          <div>
-            <label className="block text-sm font-medium">Description</label>
-            <textarea
-              name="description"
-              value={formData.description || ''}
-              onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-            />
-          </div>
+                {/* Deskripsi */}
+                <Form.Group className="mb-3" controlId="description">
+                    <Form.Label>Description</Form.Label>
+                    <Form.Control
+                        as="textarea"
+                        rows={3}
+                        name="description"
+                        value={formData.description}
+                        onChange={handleChange}
+                        disabled={loading}
+                    />
+                </Form.Group>
 
-          {/* Category */}
-          <div>
-            <label className="block text-sm font-medium">Category</label>
-            <select
-              value={selectedCategoryId}
-              onChange={(e) => setSelectedCategoryId(e.target.value)}
-              required
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-            >
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          
-          {/* Priority */}
-          <div>
-            <label className="block text-sm font-medium">Priority</label>
-            <select
-              name="priority"
-              value={formData.priority}
-              onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </div>
+                <Row>
+                    {/* Priority */}
+                    <Form.Group as={Col} md="4" className="mb-3" controlId="priority">
+                        <Form.Label>Priority</Form.Label>
+                        <Form.Select 
+                            name="priority" 
+                            value={formData.priority} 
+                            onChange={handleChange}
+                            required
+                            disabled={loading}
+                        >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </Form.Select>
+                    </Form.Group>
 
-          {/* Due Date */}
-          <div>
-            <label className="block text-sm font-medium">Due Date</label>
-            <input
-              type="date"
-              name="dueDate"
-              value={formData.dueDate || ''}
-              onChange={handleChange}
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-            />
-          </div>
+                    {/* Due Date */}
+                    <Form.Group as={Col} md="4" className="mb-3" controlId="dueDate">
+                        <Form.Label>Due Date (Optional)</Form.Label>
+                        <Form.Control
+                            type="date"
+                            name="dueDate"
+                            value={formData.dueDate}
+                            onChange={handleChange}
+                            disabled={loading}
+                        />
+                    </Form.Group>
+                </Row>
 
-          {/* isCompleted */}
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              name="isCompleted"
-              checked={formData.isCompleted}
-              onChange={handleChange}
-              className="mr-2"
-            />
-            <label className="text-sm font-medium">Is Completed</label>
-          </div>
+                {/* File Upload */}
+                <Form.Group className="mb-3" controlId="file">
+                    <Form.Label>Attach File (Optional)</Form.Label>
+                    <Form.Control
+                        type="file"
+                        onChange={handleFileChange}
+                        disabled={loading}
+                    />
+                    <Form.Text className="text-muted">Max file size depends on server limits.</Form.Text>
+                </Form.Group>
 
-          {/* isPublic */}
-          <div className="flex items-center">
-            <input
-              type="checkbox"
-              name="isPublic"
-              checked={formData.isPublic}
-              onChange={handleChange}
-              className="mr-2"
-            />
-            <label className="text-sm font-medium">Is Public</label>
-          </div>
+                {/* Is Public Checkbox */}
+                <Form.Group className="mb-3" controlId="isPublic">
+                    <Form.Check
+                        type="checkbox"
+                        label="Make this Task Publicly Visible"
+                        name="isPublic"
+                        checked={formData.isPublic}
+                        onChange={handleChange}
+                        disabled={loading}
+                    />
+                </Form.Group>
 
-          {/* File Upload */}
-          <div>
-            <label className="block text-sm font-medium">Attachment (Optional)</label>
-            <input
-              type="file"
-              onChange={handleFileChange}
-              className="mt-1 block w-full"
-            />
-          </div>
-
-          {error && <p className="text-red-500">{error}</p>}
-          
-          <button
-            type="submit"
-            disabled={loading || !selectedCategoryId}
-            className="bg-green-600 text-white px-4 py-2 rounded shadow-md hover:bg-green-700 disabled:bg-gray-400"
-          >
-            {loading ? 'Creating...' : 'Create Task'}
-          </button>
-        </form>
-      </div>
-    </ProtectedRoute>
-  );
+                <Button variant="success" type="submit" disabled={loading || !formData.categoryId || !formData.title}>
+                    {loading ? <Spinner animation="border" size="sm" /> : 'Create Task'}
+                </Button>
+            </Form>
+        </div>
+    );
 };
 
 export default NewTaskPage;

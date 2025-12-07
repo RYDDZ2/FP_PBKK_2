@@ -1,105 +1,121 @@
-// src/pages/auth/login.tsx
+// pages/auth/login.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, FormEvent, ChangeEvent, useEffect } from 'react';
 import { useRouter } from 'next/router';
+import axios, { AxiosError } from 'axios';
+import { Button, Form, Alert, Spinner } from 'react-bootstrap';
 import Link from 'next/link';
+
+// Pastikan path ini benar
 import { useAuth } from '../../contexts/AuthContext'; 
-import { API_BASE_URL } from '../../utils/api';
+import { API_BASE_URL } from '../../utils/api'; 
 
 const LoginPage: React.FC = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const { user, login } = useAuth(); 
-  const router = useRouter();
+    const { login, user, isAuthReady } = useAuth();
+    const router = useRouter();
 
-  useEffect(() => {
-    if (user) {
-      router.push('/tasks'); 
-    }
-  }, [user, router]);
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || 'Login failed');
+    // Jika user sudah login dan AuthContext sudah siap, redirect ke My Tasks
+    useEffect(() => {
+        if (isAuthReady && user) {
+            router.push('/tasks/my');
         }
+    }, [isAuthReady, user, router]);
 
-        const data = await response.json();
-        const { token, user: userData } = data; 
+    const handleSubmit = async (e: FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
 
-        login(token, userData); 
-        router.push('/tasks');
+        try {
+            const response = await axios.post(`${API_BASE_URL}/auth/login`, {
+                username,
+                password,
+            });
 
-    } catch (err) {
-        const message = err instanceof Error ? err.message : 'An unknown error occurred.';
-        setError(`Login error: ${message}. Pastikan server backend berjalan.`);
-    } finally {
-        setLoading(false);
+            // Asumsi response.data mengandung: { accessToken, username, email }
+            const { accessToken, username: responseUsername, email } = response.data;
+            
+            // Simpan status login ke context (dan LocalStorage melalui AuthContext)
+            login(accessToken, { username: responseUsername, email });
+
+            // FIX KRITIS: Redirect ke halaman yang benar
+            router.push('/tasks/my'); 
+
+        } catch (err) {
+            const axiosError = err as AxiosError;
+            // Tampilkan pesan error dari server jika ada
+            const errorMessage = axiosError.response?.data?.message || 'Login failed. Check your credentials.';
+            setError(errorMessage);
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    // Tampilkan spinner jika AuthContext sedang memuat data dari LocalStorage
+    if (!isAuthReady) {
+        return <div className="text-center mt-5"><Spinner animation="border" /> Initializing App...</div>;
     }
-  };
 
-  if (user) {
-    return <div className="p-4 text-center">Redirecting...</div>;
-  }
+    // Jika user sudah login (sudah ter-*redirect* oleh useEffect), tidak perlu render form
+    if (user) {
+        return <div className="text-center mt-5">You are already logged in.</div>;
+    }
 
-  return (
-    <div className="container mx-auto p-4" style={{ maxWidth: '400px' }}>
-      <h1 className="text-3xl font-bold mb-4 text-center">Login</h1>
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
+    return (
+        <div className="row justify-content-center mt-5">
+            <div className="col-md-5">
+                <div className="card shadow-lg">
+                    <div className="card-header bg-primary text-white text-center">
+                        <h2>Login to Task Manager</h2>
+                    </div>
+                    <div className="card-body p-4">
+                        {error && <Alert variant="danger">{error}</Alert>}
+                        
+                        <Form onSubmit={handleSubmit}>
+                            <Form.Group className="mb-3" controlId="formBasicUsername">
+                                <Form.Label>Username</Form.Label>
+                                <Form.Control
+                                    type="text"
+                                    placeholder="Enter username"
+                                    value={username}
+                                    onChange={(e: ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)}
+                                    required
+                                    disabled={loading}
+                                />
+                            </Form.Group>
+
+                            <Form.Group className="mb-3" controlId="formBasicPassword">
+                                <Form.Label>Password</Form.Label>
+                                <Form.Control
+                                    type="password"
+                                    placeholder="Password"
+                                    value={password}
+                                    onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+                                    required
+                                    disabled={loading}
+                                />
+                            </Form.Group>
+
+                            <Button variant="primary" type="submit" disabled={loading || !username || !password} className="w-100">
+                                {loading ? <Spinner animation="border" size="sm" /> : 'Login'}
+                            </Button>
+                        </Form>
+                    </div>
+                    <div className="card-footer text-center">
+                        Don't have an account?{' '}
+                        <Link href="/auth/register" passHref legacyBehavior>
+                            <a className="text-primary">Register here</a>
+                        </Link>
+                    </div>
+                </div>
+            </div>
         </div>
-      )}
-      
-      <form onSubmit={handleSubmit}>
-        <div className="mb-3">
-          <label htmlFor="username" className="form-label">Username</label>
-          <input
-            type="text"
-            className="form-control"
-            id="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-        </div>
-        <div className="mb-3">
-          <label htmlFor="password" className="form-label">Password</label>
-          <input
-            type="password"
-            className="form-control"
-            id="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="btn btn-primary w-100"
-        >
-          {loading ? 'Logging In...' : 'Login'}
-        </button>
-      </form>
-      <p className="mt-3 text-center">
-        Belum punya akun? <Link href="/auth/register" className="text-primary">Daftar di sini</Link>
-      </p>
-    </div>
-  );
+    );
 };
 
 export default LoginPage;
