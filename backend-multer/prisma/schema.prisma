@@ -1,40 +1,61 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
+// Menggunakan SQLite untuk development
 datasource db {
   provider = "sqlite"
   url      = "file:./dev.db"
 }
 
+// 1. Model User
 model User {
-  username     String  @id
-  password     String
-  refreshToken String? // Store the hashed refresh token
-  posts        Post[]
+  username      String     @id
+  password      String
+  refreshToken  String?    
+  email         String?    @unique 
+  fullName      String?
+
+  tasks         Task[]     // Relasi ke Task yang dibuat (Ganti dari 'posts')
+  categories    Category[] // Relasi ke Category yang dibuat
 
   @@map("users")
 }
 
-model Post {
-  id        String   @id @default(uuid())
-  content   String
-  imagePath String? // Optional - S3 path to uploaded image
-  authorId  String
-  author    User     @relation(fields: [authorId], references: [username], onDelete: Cascade)
-  replyToId String? // Optional - null if it's not a reply
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// 2. Model Category (BARU)
+model Category {
+  id            String   @id @default(uuid())
+  name          String
+  
+  ownerId       String
+  owner         User     @relation(fields: [ownerId], references: [username], onDelete: Cascade)
+  tasks         Task[]   
 
-  // Reply relationships
-  replyTo Post?  @relation("PostReplies", fields: [replyToId], references: [id], onDelete: Cascade)
-  replies Post[] @relation("PostReplies")
+  @@map("categories")
+}
 
-  @@map("posts")
+// 3. Model Task (MENGGANTIKAN model Post)
+model Task {
+  id            String      @id @default(uuid())
+  title         String      // 4.1.1. Title
+  description   String?     // 4.1.1. Description
+  priority      String      // 4.1.1. Priority ('low', 'medium', 'high')
+  dueDate       DateTime?   // 4.1.1. Due date (Bisa null)
+  isCompleted   Boolean     @default(false) 
+  filePath      String?     // 2.2.1. Path file terlampir
+  
+  authorId      String
+  author        User        @relation(fields: [authorId], references: [username], onDelete: Cascade)
+  
+  categoryId    String?
+  category      Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  
+  isPublic      Boolean     @default(false) 
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("tasks")
 }

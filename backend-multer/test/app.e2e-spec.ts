@@ -1,343 +1,160 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+// test/app.e2e-spec.ts
+
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import request from 'supertest';
-import { App } from 'supertest/types';
-import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma.service';
-import { NestExpressApplication } from '@nestjs/platform-express';
-import { join } from 'path';
+import { INestApplication } from '@nestjs/common';
+import { default as request } from 'supertest'; 
+import { AppModule } from './../src/app.module';
+import { PrismaService } from './../src/prisma.service';
+import * as bcrypt from 'bcryptjs'; 
+import { AuthService } from './../src/auth/auth.service';
+import { ConfigModule } from '@nestjs/config'; 
 
-describe('Image Upload with Multer (e2e)', () => {
-  let app: INestApplication<App>;
-  let prismaService: PrismaService;
-  let authToken: string;
-  let testUsername: string;
+describe('AppController (e2e)', () => {
+  let app: INestApplication;
+  let prisma: PrismaService;
+  let authService: AuthService;
 
-  // Create a simple test image buffer (1x1 PNG)
-  const createTestImageBuffer = () => {
-    return Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-      'base64',
-    );
+  const testUser = {
+    username: 'testuser',
+    password: 'password123',
+    email: 'testuser@example.com',
   };
+  const anotherUser = {
+    username: 'anotheruser',
+    password: 'password123',
+    email: 'anotheruser@example.com',
+  };
+
+  let testAccessToken: string;
+  let testRefreshToken: string;
+  let testCategoryId: string; 
+  let testTaskId: string | null = null; 
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      imports: [
+        AppModule,
+        // FIX PENTING 1: Daftarkan ConfigModule dengan nilai JWT_SECRET untuk tes
+        ConfigModule.forRoot({
+          isGlobal: true,
+          load: [() => ({
+            JWT_SECRET: 'super-secret-testing-key-for-e2e', 
+          })],
+        }),
+      ],
     }).compile();
 
-    app = moduleFixture.createNestApplication<NestExpressApplication>();
-    app.useGlobalPipes(new ValidationPipe());
-
-    // Configure static assets (same as main.ts)
-    (app as NestExpressApplication).useStaticAssets(
-      join(__dirname, '..', 'uploads'),
-      {
-        prefix: '/uploads/',
-      },
-    );
-
-    prismaService = app.get<PrismaService>(PrismaService);
-
+    app = moduleFixture.createNestApplication();
+    
+    // FIX PENTING 2: Set Global Prefix
+    app.setGlobalPrefix('api/v1'); 
+    
     await app.init();
+
+    // Inisialisasi service
+    prisma = app.get<PrismaService>(PrismaService);
+    authService = app.get<AuthService>(AuthService);
+
+    // Hapus semua data
+    await prisma.task.deleteMany(); 
+    await prisma.category.deleteMany(); 
+    await prisma.user.deleteMany();
+
+    // Buat user baru 
+    await prisma.user.createMany({
+      data: [
+        { username: testUser.username, password: await bcrypt.hash(testUser.password, 10), email: testUser.email },
+        { username: anotherUser.username, password: await bcrypt.hash(anotherUser.password, 10), email: anotherUser.email },
+      ],
+    });
+
+    // Login untuk mendapatkan token
+    const loginResponse = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ username: testUser.username, password: testUser.password })
+      .expect(201); 
+
+    // FIX AKHIR: Mengambil token menggunakan properti 'access_token' (snake_case)
+    testAccessToken = loginResponse.body.access_token;
+    testRefreshToken = loginResponse.body.refresh_token; 
+    
+    if (!testAccessToken) {
+        throw new Error(
+            "Login succeeded (Status 201), but 'access_token' is missing in the response body. " +
+            "Actual response body: " + JSON.stringify(loginResponse.body)
+        );
+    }
   });
 
-  beforeEach(async () => {
-    await prismaService.post.deleteMany();
-    await prismaService.user.deleteMany();
-    testUsername = `testuser_${Date.now()}`;
+  // --- TEST CATEGORY ---
+  it('/categories (POST) should create a category', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/categories')
+      .set('Authorization', `Bearer ${testAccessToken}`)
+      .send({ name: 'Work' })
+      .expect(201);
+    
+    expect(response.body.name).toBe('Work');
+    testCategoryId = response.body.id;
+  });
 
-    // Create a user and get auth token for all tests
-    const registerResponse = await request(app.getHttpServer())
-      .post('/auth/register')
+  // --- TEST TASK ---
+  it('/tasks (POST) should create a task', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/tasks')
+      .set('Authorization', `Bearer ${testAccessToken}`)
       .send({
-        username: testUsername,
-        password: 'password123',
-      });
+        title: 'Complete NestJS Project',
+        description: 'Finish all CRUD operations and deploy',
+        priority: 'high',
+        categoryId: testCategoryId,
+        isPublic: true,
+      })
+      .expect(201);
 
-    authToken = registerResponse.body.access_token;
+    expect(response.body.title).toBe('Complete NestJS Project');
+    expect(response.body.authorId).toBe(testUser.username);
+    testTaskId = response.body.id;
   });
 
+  it('/tasks (GET) should retrieve owner tasks', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/tasks')
+      .set('Authorization', `Bearer ${testAccessToken}`)
+      .expect(200);
+
+    expect(response.body.data.length).toBeGreaterThan(0);
+    expect(response.body.data.some(task => task.id === testTaskId)).toBe(true);
+  });
+  
+  it('/tasks/public (GET) should retrieve public tasks', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/tasks/public')
+      .expect(200);
+
+    expect(response.body.data.length).toBeGreaterThan(0);
+    expect(response.body.data.some(task => task.isPublic === true)).toBe(true);
+  });
+
+  it('/tasks/:id (PATCH) should update a task', async () => {
+    const response = await request(app.getHttpServer())
+      .patch(`/api/v1/tasks/${testTaskId}`)
+      .set('Authorization', `Bearer ${testAccessToken}`)
+      .send({ title: 'Completed NestJS Project Update', isCompleted: true })
+      .expect(200);
+
+    expect(response.body.title).toBe('Completed NestJS Project Update');
+    expect(response.body.isCompleted).toBe(true);
+  });
+
+  it('/tasks/:id (DELETE) should delete a task', async () => {
+    await request(app.getHttpServer())
+      .delete(`/api/v1/tasks/${testTaskId}`)
+      .set('Authorization', `Bearer ${testAccessToken}`)
+      .expect(200);
+  });
+  
   afterAll(async () => {
-    await prismaService.post.deleteMany();
-    await prismaService.user.deleteMany();
     await app.close();
-  });
-
-  describe('File Upload with Multer', () => {
-    it('should upload an image with valid authentication', async () => {
-      const response = await request(app.getHttpServer())
-        .post('/upload')
-        .set('Authorization', `Bearer ${authToken}`)
-        .attach('image', createTestImageBuffer(), 'test.png')
-        .expect(201);
-
-      expect(response.body).toHaveProperty('imagePath');
-      expect(typeof response.body.imagePath).toBe('string');
-      expect(response.body.imagePath).toMatch(/^image-.*\.png$/);
-    });
-
-    it('should fail without authentication', async () => {
-      await request(app.getHttpServer())
-        .post('/upload')
-        .attach('image', createTestImageBuffer(), 'test.png')
-        .expect(401);
-    });
-
-    it('should return null imagePath when no file is provided', async () => {
-      const response = await request(app.getHttpServer())
-        .post('/upload')
-        .set('Authorization', `Bearer ${authToken}`)
-        .expect(201);
-
-      expect(response.body).toHaveProperty('imagePath', null);
-    });
-
-    it('should accept different image file extensions', async () => {
-      const extensions = [
-        { ext: 'jpg', filename: 'test.jpg' },
-        { ext: 'png', filename: 'test.png' },
-        { ext: 'gif', filename: 'test.gif' },
-        { ext: 'webp', filename: 'test.webp' },
-      ];
-
-      for (const { ext, filename } of extensions) {
-        const response = await request(app.getHttpServer())
-          .post('/upload')
-          .set('Authorization', `Bearer ${authToken}`)
-          .attach('image', createTestImageBuffer(), filename)
-          .expect(201);
-
-        expect(response.body.imagePath).toMatch(
-          new RegExp(`^image-.*\\.${ext}$`),
-        );
-      }
-    });
-
-    it('should reject non-image files', async () => {
-      const textBuffer = Buffer.from('Hello World');
-
-      const response = await request(app.getHttpServer())
-        .post('/upload')
-        .set('Authorization', `Bearer ${authToken}`)
-        .attach('image', textBuffer, 'test.txt')
-        .expect(400);
-
-      expect(response.body).toHaveProperty('message');
-      expect(response.body.message).toContain('Only image files are allowed');
-    });
-
-    it('should reject files larger than 5MB', async () => {
-      // Create a buffer larger than 5MB
-      const largeBuffer = Buffer.alloc(6 * 1024 * 1024);
-
-      const response = await request(app.getHttpServer())
-        .post('/upload')
-        .set('Authorization', `Bearer ${authToken}`)
-        .attach('image', largeBuffer, 'large.png')
-        .expect(413);
-
-      expect(response.body).toHaveProperty('message');
-      expect(response.body.message).toContain('File too large');
-    });
-  });
-
-  describe('Posts with Image Upload', () => {
-    let uploadedImagePath: string;
-
-    beforeEach(async () => {
-      // Upload an image first
-      const uploadResponse = await request(app.getHttpServer())
-        .post('/upload')
-        .set('Authorization', `Bearer ${authToken}`)
-        .attach('image', createTestImageBuffer(), 'test.png');
-
-      uploadedImagePath = uploadResponse.body.imagePath;
-    });
-
-    it('should create a post with imagePath', async () => {
-      const createPostDto = {
-        content: 'Post with image',
-        imagePath: uploadedImagePath,
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/posts')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send(createPostDto)
-        .expect(201);
-
-      expect(response.body).toHaveProperty('content', 'Post with image');
-      expect(response.body).toHaveProperty('imagePath', uploadedImagePath);
-      expect(response.body).toHaveProperty('author');
-      expect(response.body.author).toHaveProperty('username', testUsername);
-      expect(response.body).toHaveProperty('id');
-    });
-
-    it('should create a post without imagePath', async () => {
-      const createPostDto = {
-        content: 'Post without image',
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/posts')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send(createPostDto)
-        .expect(201);
-
-      expect(response.body).toHaveProperty('content', 'Post without image');
-      expect(response.body.imagePath).toBeNull();
-    });
-
-    it('should retrieve posts with imagePath in list', async () => {
-      // Create post with image
-      await request(app.getHttpServer())
-        .post('/posts')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send({
-          content: 'Post with image',
-          imagePath: uploadedImagePath,
-        });
-
-      // Get all posts
-      const response = await request(app.getHttpServer())
-        .get('/posts')
-        .expect(200);
-
-      expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBe(1);
-      expect(response.body[0]).toHaveProperty('imagePath');
-      expect(response.body[0].imagePath).toBe(uploadedImagePath);
-    });
-
-    it('should retrieve post with imagePath by id', async () => {
-      // Create post with image
-      const createResponse = await request(app.getHttpServer())
-        .post('/posts')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send({
-          content: 'Post with image',
-          imagePath: uploadedImagePath,
-        });
-
-      const postId = createResponse.body.id;
-
-      // Get specific post
-      const response = await request(app.getHttpServer())
-        .get(`/posts/${postId}`)
-        .expect(200);
-
-      expect(response.body).toHaveProperty('id', postId);
-      expect(response.body).toHaveProperty('imagePath');
-      expect(response.body.imagePath).toBe(uploadedImagePath);
-    });
-
-    it('should validate imagePath format', async () => {
-      const createPostDto = {
-        content: 'Post with custom imagePath',
-        imagePath: 'custom-path.jpg',
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/posts')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send(createPostDto)
-        .expect(201);
-
-      // Any string is accepted as imagePath
-      expect(response.body).toHaveProperty('imagePath', 'custom-path.jpg');
-    });
-  });
-
-  describe('Image Upload Integration Flow', () => {
-    it('should complete full image upload flow', async () => {
-      // Step 1: Upload image
-      const uploadResponse = await request(app.getHttpServer())
-        .post('/upload')
-        .set('Authorization', `Bearer ${authToken}`)
-        .attach('image', createTestImageBuffer(), 'test.png')
-        .expect(201);
-
-      expect(uploadResponse.body).toHaveProperty('imagePath');
-      const { imagePath } = uploadResponse.body;
-
-      // Step 2: Create post with imagePath
-      const createPostResponse = await request(app.getHttpServer())
-        .post('/posts')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send({
-          content: 'Post with uploaded image',
-          imagePath: imagePath,
-        })
-        .expect(201);
-
-      expect(createPostResponse.body).toHaveProperty('imagePath', imagePath);
-      expect(createPostResponse.body).toHaveProperty(
-        'content',
-        'Post with uploaded image',
-      );
-
-      // Step 3: Retrieve post and verify imagePath
-      const postId = createPostResponse.body.id;
-      const getPostResponse = await request(app.getHttpServer())
-        .get(`/posts/${postId}`)
-        .expect(200);
-
-      expect(getPostResponse.body).toHaveProperty('imagePath', imagePath);
-
-      // Step 4: Verify in posts list
-      const getPostsResponse = await request(app.getHttpServer())
-        .get('/posts')
-        .expect(200);
-
-      const post = getPostsResponse.body.find((p: any) => p.id === postId);
-      expect(post).toBeDefined();
-      expect(post.imagePath).toBe(imagePath);
-
-      // Step 5: Verify image is accessible via static route
-      const imageResponse = await request(app.getHttpServer())
-        .get(`/uploads/${imagePath}`)
-        .expect(200);
-
-      expect(imageResponse.headers['content-type']).toContain('image');
-    });
-  });
-
-  describe('Multiple Image Formats', () => {
-    it('should handle different image formats', async () => {
-      const formats = [
-        { extension: 'jpg', filename: 'test.jpg' },
-        { extension: 'png', filename: 'test.png' },
-        { extension: 'gif', filename: 'test.gif' },
-        { extension: 'webp', filename: 'test.webp' },
-      ];
-
-      for (const format of formats) {
-        // Upload image
-        const uploadResponse = await request(app.getHttpServer())
-          .post('/upload')
-          .set('Authorization', `Bearer ${authToken}`)
-          .attach('image', createTestImageBuffer(), format.filename)
-          .expect(201);
-
-        const { imagePath } = uploadResponse.body;
-
-        // Create post with this image
-        const postResponse = await request(app.getHttpServer())
-          .post('/posts')
-          .set('Authorization', `Bearer ${authToken}`)
-          .send({
-            content: `Post with ${format.extension} image`,
-            imagePath: imagePath,
-          })
-          .expect(201);
-
-        expect(postResponse.body.imagePath).toMatch(
-          new RegExp(`^image-.*\\.${format.extension}$`),
-        );
-      }
-    });
   });
 });
