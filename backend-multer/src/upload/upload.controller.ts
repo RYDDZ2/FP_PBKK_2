@@ -1,3 +1,5 @@
+// src/upload/upload.controller.ts
+
 import {
   Controller,
   Post,
@@ -11,21 +13,33 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
 
-@Controller('upload')
+@Controller('files') 
 export class UploadController {
-  @Post()
-  @UseGuards(JwtAuthGuard)
+  @Post('upload') 
+  @UseGuards(JwtAuthGuard) 
   @UseInterceptors(
-    FileInterceptor('image', {
+    FileInterceptor('file', { 
       limits: {
         fileSize: 5 * 1024 * 1024,
       },
       fileFilter: (req, file, callback) => {
-        if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/)) {
-          return callback(
-            new BadRequestException('Only image files are allowed'),
-            false,
-          );
+        const allowedMimeTypes = [
+            // Gambar
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            // Dokumen
+            'application/pdf', 'text/plain', 
+            'application/msword', 
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+            'application/vnd.ms-excel', 
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
+        ];
+        
+        if (!allowedMimeTypes.includes(file.mimetype)) {
+             const errorMessage = 'Only image and common document files are allowed';
+             return callback(
+                new BadRequestException(errorMessage),
+                false,
+            );
         }
         callback(null, true);
       },
@@ -33,7 +47,7 @@ export class UploadController {
         destination: './uploads',
         filename: (req, file, callback) => {
           const uniqueSuffix =
-            'image-' + Date.now() + '-' + Math.round(Math.random() * 1e9);
+            'file-' + Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname);
           callback(null, `${uniqueSuffix}${ext}`);
         },
@@ -42,10 +56,12 @@ export class UploadController {
   )
   uploadFile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
-      return { imagePath: null };
+      throw new BadRequestException('File upload failed or file is missing.');
     }
+    
     return {
-      imagePath: file.filename,
+      imagePath: file.filename, 
+      message: 'File uploaded successfully', 
     };
   }
 }

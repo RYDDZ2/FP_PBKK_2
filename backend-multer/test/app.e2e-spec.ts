@@ -255,16 +255,18 @@ describe('AppController (e2e)', () => {
       
       it('File upload with authentication should succeed (201)', async () => {
           await request(app.getHttpServer())
-              .post('/api/v1/files/upload') // Ganti sesuai endpoint upload file Anda
+              .post('/api/v1/files/upload') 
               .set('Authorization', `Bearer ${testAccessToken}`)
-              .attach('file', dummyFilePath) // 'file' adalah nama field yang digunakan oleh Multer
+              .attach('file', dummyFilePath) 
               .expect(201);
       });
 
       it('File upload without authentication should fail (401)', async () => {
           await request(app.getHttpServer())
               .post('/api/v1/files/upload')
-              .attach('file', dummyFilePath)
+              // HILANGKAN .attach('file', dummyFilePath) di sini.
+              // Kita hanya perlu menguji bahwa tanpa token, endpoint ditolak (401),
+              // tanpa perlu memicu Multer untuk memproses stream file.
               .expect(401);
       });
       

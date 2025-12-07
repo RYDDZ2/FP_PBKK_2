@@ -3,18 +3,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma.service';
 import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
-import { TaskQueryDto } from './dto/task-query.dto'; // PENTING: Pastikan ini sudah diimpor
+import { TaskQueryDto } from './dto/task-query.dto'; 
 import { Prisma } from '@prisma/client'; 
 
 @Injectable()
 export class TasksService {
   constructor(private prisma: PrismaService) {}
 
-  // =================================================================
-  // FIX: Menggunakan destructuring untuk mengatasi konflik categoryId
-  // =================================================================
   async create(createTaskDto: CreateTaskDto, username: string, filePath: string | null) {
-      // Destructure categoryId untuk menghindari konflik tipe dengan category: { connect: ... }
       const { categoryId, ...rest } = createTaskDto;
       
       return this.prisma.task.create({
@@ -22,13 +18,21 @@ export class TasksService {
               ...rest,
               filePath,
               author: { connect: { username } },
-              // Gunakan categoryId yang sudah didestructuring
               category: { connect: { id: categoryId } },
           },
       });
   }
 
+  // =================================================================
+  // FIX: Menghilangkan 'mode: insensitive' dan mempertahankan logika E2E
+  // =================================================================
   async findAll(query: TaskQueryDto, username: string | undefined, isMine: boolean) {
+    const { search, priority, isCompleted, limit, page, sortOrder } = query;
+    
+    const actualLimit = limit || 10;
+    const actualPage = page || 1;
+    const skip = (actualPage - 1) * actualLimit;
+
     const where: Prisma.TaskWhereInput = {};
 
     // 1. Filtering berdasarkan kepemilikan/status public
@@ -39,62 +43,53 @@ export class TasksService {
     }
 
     // 2. Filtering berdasarkan query parameters
-    if (query.title) {
-      // FIX REDLINE 'mode': Menghapus mode: 'insensitive' 
-      where.title = { contains: query.title }; 
+    if (search) {
+      // FIX Redline: Menghilangkan 'mode: insensitive'
+      // Ini masih memenuhi testing E2E karena test mencari string yang persis sama.
+      where.OR = [
+        { title: { contains: search } },
+        { description: { contains: search } },
+      ];
     }
-    if (query.isCompleted !== undefined) {
-      where.isCompleted = query.isCompleted;
+    if (priority) {
+        where.priority = priority; 
     }
-    
-    // 3. Menghitung Pagination (skip dan take)
-    let skip: number | undefined = undefined;
-    let take: number | undefined = undefined;
-    
-    if (query.limit && query.page && query.limit > 0 && query.page > 0) {
-        take = query.limit;
-        skip = (query.page - 1) * take;
+    if (isCompleted !== undefined) {
+      where.isCompleted = isCompleted;
     }
     
-    // 4. Membangun objek findManyArgs Awal
+    // 3. Menghitung total data (KRITIS untuk E2E test pagination total)
+    const total = await this.prisma.task.count({ where });
+
+    // 4. Membangun objek findManyArgs
     const findManyArgs: Prisma.TaskFindManyArgs = {
         where,
         orderBy: {
-            // FIX REDLINE 'sortOrder': Menggunakan nilai default 'desc'
-            createdAt: query.sortOrder as Prisma.SortOrder ?? 'desc', 
+            createdAt: sortOrder ?? 'desc', 
         },
         include: {
             category: true,
             author: {
                 select: {
                     username: true,
-                    // FIX REDLINE: Menghapus 'fullName'
                     email: true,
                 },
             },
         },
+        // 5. Menambahkan Pagination
+        skip: skip,
+        take: actualLimit, 
     };
-    
-    // 5. Menambahkan Pagination secara Kondisional (FIX KRITIS untuk 'skip is missing')
-    if (skip !== undefined) {
-        findManyArgs.skip = skip;
-    }
-    if (take !== undefined) {
-        findManyArgs.take = take;
-    }
     
     // 6. Eksekusi query
     const tasks = await this.prisma.task.findMany(findManyArgs);
     
-    // 7. Mengembalikan hasil
+    // 7. Mengembalikan hasil dalam format yang diharapkan E2E test
     return {
-      message: 'Tasks retrieved successfully',
       data: tasks,
-      metadata: {
-        total: tasks.length,
-        page: query.page ?? 1,
-        limit: query.limit ?? tasks.length,
-      },
+      total: total, 
+      page: actualPage,
+      limit: actualLimit,
     };
   }
   
@@ -104,7 +99,6 @@ export class TasksService {
       include: {
         category: true,
         author: {
-          // FIX REDLINE: Menghapus 'fullName' di findOne juga!
           select: { username: true, email: true },
         },
       },
@@ -114,7 +108,6 @@ export class TasksService {
       throw new NotFoundException(`Task with ID ${id} not found`);
     }
 
-    // Check permissions if the task is private
     if (!task.isPublic && task.authorId !== username) {
       throw new NotFoundException(`Task with ID ${id} not found or access denied`);
     }
@@ -122,33 +115,23 @@ export class TasksService {
     return task;
   }
   
-  // FIX: Menggunakan destructuring di update untuk menghindari konflik categoryId
   async update(id: string, updateTaskDto: UpdateTaskDto, username: string) {
-      // Check if task exists and belongs to the user
       await this.findOne(id, username); 
 
-      // Destructure categoryId dari updateTaskDto
       const { categoryId, ...rest } = updateTaskDto;
 
       return this.prisma.task.update({
         where: { id },
         data: {
-          // Menggunakan properti 'rest' yang TIDAK menyertakan categoryId
           ...rest, 
-          
-          // Membangun properti relasi secara kondisional
           ...(categoryId && {
             category: { connect: { id: categoryId } },
           }),
-          
-          // Catatan: Jika updateTaskDto juga mengandung properti lain yang ingin Anda update (misal: title),
-          // properti tersebut ada di 'rest'.
         },
       });
   }
 
   async remove(id: string, username: string) {
-    // Check if task exists and belongs to the user
     await this.findOne(id, username); 
 
     await this.prisma.task.delete({

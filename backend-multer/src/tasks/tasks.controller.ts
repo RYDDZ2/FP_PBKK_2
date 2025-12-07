@@ -10,63 +10,54 @@ import {
   Delete,
   Query,
   UseGuards,
-  UploadedFile,
-  UseInterceptors,
   HttpStatus,
   HttpCode,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto, UpdateTaskDto } from './dto/task.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // PATH SESUAI STRUKTUR ANDA
+import { JwtAuthGuard } from '../auth/jwt-auth.guard'; 
 import { User } from 'src/common/decorators/user.decorator';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
 
-// Konfigurasi Multer untuk File Upload
-const storage = diskStorage({
-  destination: './uploads',
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const fileExtension = file.originalname.split('.').pop();
-    cb(null, `${file.fieldname}-${uniqueSuffix}.${fileExtension}`);
-  },
-});
+// CATATAN PENTING:
+// Semua konfigurasi Multer (diskStorage, FileInterceptor, UploadedFile)
+// sudah DIHAPUS dari controller ini untuk memisahkan tanggung jawab.
+// Tugas utama file upload ditangani oleh UploadController.
 
 @Controller('tasks')
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
-  @UseGuards(JwtAuthGuard) // <-- Guard di level method
+  @UseGuards(JwtAuthGuard) 
   @Post()
-  @UseInterceptors(FileInterceptor('file', { storage: storage }))
   async create(
-    @UploadedFile() file: Express.Multer.File,
     @Body() createTaskDto: CreateTaskDto,
     @User('username') username: string,
   ) {
-    const filePath = file ? file.path : null;
-    return this.tasksService.create(createTaskDto, username, filePath);
+    // filePath di set null karena upload file terpisah
+    return this.tasksService.create(createTaskDto, username, null); 
   }
 
-  @UseGuards(JwtAuthGuard) // <-- Guard di level method
+  @UseGuards(JwtAuthGuard) 
   @Get()
   findAllMine(@Query() query: TaskQueryDto, @User('username') username: string) {
+    // Menggunakan DTO baru dengan filter, search, dan pagination
     return this.tasksService.findAll(query, username, true);
   }
 
-  @Get('public') // <-- ENDPOINT INI TIDAK MEMILIKI @UseGuards
+  @Get('public') 
   findAllPublic(@Query() query: TaskQueryDto) {
+    // Menggunakan DTO baru dengan filter, search, dan pagination
     return this.tasksService.findAll(query, undefined, false);
   }
 
-  @UseGuards(JwtAuthGuard) // <-- Guard di level method
+  @UseGuards(JwtAuthGuard) 
   @Get(':id')
   findOne(@Param('id') id: string, @User('username') username: string) {
     return this.tasksService.findOne(id, username);
   }
 
-  @UseGuards(JwtAuthGuard) // <-- Guard di level method
+  @UseGuards(JwtAuthGuard) 
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -76,7 +67,7 @@ export class TasksController {
     return this.tasksService.update(id, updateTaskDto, username);
   }
 
-  @UseGuards(JwtAuthGuard) // <-- Guard di level method
+  @UseGuards(JwtAuthGuard) 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   remove(@Param('id') id: string, @User('username') username: string) {
